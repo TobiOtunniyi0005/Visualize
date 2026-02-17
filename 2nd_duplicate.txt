@@ -1,0 +1,233 @@
+from screeninfo import get_monitors
+import pygame
+import numpy as np
+import copy
+from math import sqrt
+
+# Get the primary monitor's resolution
+monitor = get_monitors()[0]
+monitor_width = monitor.width
+monitor_height = monitor.height
+total_pixels = monitor_width * monitor_height
+
+print(f"Screen resolution: {monitor_width} x {monitor_height} pixels")
+print(f"Total pixels: {total_pixels}")
+
+
+
+
+
+n_streams = int(input("Enter the number of input variable streams\\sources: "))
+dimensions = n_streams*[0]
+print(dimensions)
+
+#Set the initial location of the camera in this higher dimensional space.
+cam_dim = []
+def setcamloc(dimlist = dimensions):
+    cam_dim = dimlist
+
+
+n_default_vector = [1/sqrt(1*n_streams)]*n_streams #Direction as a unit_vector.
+default_cam_distance = int(input('User please enter your distance to the screen')) #Default distance to screen 
+
+pixel_size = 1
+#Distance to screen is the only thing that matters.
+cam_angle = [0]*n_streams#This tells the users the direction of the camera.
+
+
+
+userwidth = 0
+while True:  # This ensures the loop runs at least once
+    userwidth = int(input("Enter the size of the screen width you want to use: ")) #Needs good break points and error catching
+    if (userwidth<monitor_width) and (userwidth>2):  # The more than two is to avoid breaking
+        break  # Exit the loop when the condition is met
+userheight = 0
+while True:  # This ensures the loop runs at least once
+    userheight = int(input("Enter the the size of the screen height you want to use: ")) #Needs good break points and error catching
+    if (userheight<monitor_height) and (userheight>2):  # The more than two is to avoid breaking
+        break  # Exit the loop when the condition is met
+
+
+def makearray(lister=[userwidth, userheight], default=[0]):  # More dynamic in case you have a 3D computer.
+    import copy
+    templist = default
+    for i in range(0, len(lister)):
+        templist = [copy.deepcopy(templist) for _ in range(lister[i])]  # Create deep copies
+    return templist
+
+
+scr_array_coordinates = makearray([userwidth,userheight],[0 for _ in range(n_streams)])#The array of the screen x literal locations
+scr_color = makearray([userwidth,userheight],[0,0,0])#Just the color
+scr_ul_array = makearray([n_streams,userwidth,userheight],[0,0])#This is to show that this stores the upper and lower range(2 numbers) for all dimension's(n_streams has now been replaced with ,2) 
+
+
+center = [0 for _ in range(n_streams)]
+print(center)
+center[0],center[1],center[2] = userwidth//2, userheight//2, 0#default_cam_distance  #XYZ We might have to force the minimum number of dimensions to be 3. O to everyone so every one is just their distance from the centers value.
+for i in range(userheight):
+    for i2 in range(userwidth):
+        sum = 0.0
+        scr_array_coordinates[i][i2][0] = i2*pixel_size
+        scr_array_coordinates[i][i2][1] = i*pixel_size
+        scr_array_coordinates[i][i2][2] = default_cam_distance
+        #Setting the standard XYZ
+        for i3 in range(0,n_streams):
+            scr_array_coordinates[i][i2][i3] = scr_array_coordinates[i][i2][i3]-center[i3]#Converting it to relative to the center
+            sum = sum + (scr_array_coordinates[i][i2][i3])**2
+        sum = sqrt(sum)
+        if sum!=0:
+            for i3 in range(0,n_streams):
+                scr_ul_array[i][i2][i3][0]=(scr_array_coordinates[i][i2][i3]-pixel_size/2)/sum
+                #if scr_ul_array[i][i2][i3][0]<0:
+                    #print('One')
+                scr_ul_array[i][i2][i3][1]=(scr_array_coordinates[i][i2][i3]+pixel_size/2)/sum       #Upper and Lower angle slopes.
+
+#Color would be later. But by default it would be 0.
+#Since the system itself is done then we just need the input box
+#From now on all can be deleted except the O.G vector options. The ones that are closer to the screen than the camera eye can be shown
+#Order by Distance
+#Then order by angle. Use the existing angle to delete all others with same existing angles.
+del
+
+
+# Function to apply colors to pixels
+def apply_colors(surface, alpha_arr_2d, color_list, width, height):
+    pixels = pygame.PixelArray(surface)
+    for x, y, color in color_list:
+        if 0 <= x < width and 0 <= y < height:
+            alpha_arr_2d[y][x][0] = color[3]  # Update alpha in array
+            pixels[x, y] = color  # Set RGBA
+    del pixels  # Unlock surface
+
+
+
+
+import copy
+from fractions import Fraction
+
+
+# Initialize Pygame
+pygame.init()
+
+# Set up font
+font = pygame.font.Font(None, 32)
+
+# Initial input box for screen dimensions
+dim_input_box = {
+    "rect": pygame.Rect(10, 10, 140, 32),
+    "text": "",
+    "active": True
+}
+color_active = pygame.Color("dodgerblue2")
+color_inactive = pygame.Color("lightskyblue3")
+width, height = None, None
+screen = pygame.display.set_mode((400, 300))  # Temporary screen
+pygame.display.set_caption("Enter Dimensions")
+surface = None
+alpha_arr_2d = None
+input_boxes = []
+num_boxes = 3  # Configurable number of input boxes
+pixels = None  # Track PixelArray
+input_history = []  # List to store input coordinates
+
+setting_dimensions = True
+
+running = True
+while running:
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            if setting_dimensions:
+                dim_input_box["active"] = dim_input_box["rect"].collidepoint(event.pos)
+            else:
+                for box in input_boxes:
+                    box["active"] = box["rect"].collidepoint(event.pos)
+        elif event.type == pygame.KEYDOWN:
+            if setting_dimensions:
+                if dim_input_box["active"]:
+                    if event.key == pygame.K_RETURN:
+                        try:
+                            w_str, h_str = dim_input_box["text"].split(",")
+                            width = int(Fraction(w_str))
+                            height = int(Fraction(h_str))
+                            if width > 0 and height > 0 and width <= 1920 and height <= 1080:
+                                screen = pygame.display.set_mode((width, height))
+                                pygame.display.set_caption("Dynamic Input Boxes for Fraction Input")
+                                surface = pygame.Surface((width, height), pygame.SRCALPHA)
+                                surface.fill((255, 0, 0, 128))
+                                userwidth, userheight = width, height
+                                alpha_arr_2d = [makearray([width], default=[0]) for _ in range(height)]
+                                input_boxes = [
+                                    {"rect": pygame.Rect(10, 10 + i * 40, 140, 32), "text": "", "active": False}
+                                    for i in range(num_boxes)
+                                ]
+                                setting_dimensions = False
+                            else:
+                                print("Width and height must be positive and <= 1920x1080!")
+                        except (ValueError, ZeroDivisionError):
+                            print("Invalid input! Enter width/denom,height/denom (e.g., 400/1,300/1)")
+                        dim_input_box["text"] = ""
+                    elif event.key == pygame.K_BACKSPACE:
+                        dim_input_box["text"] = dim_input_box["text"][:-1]
+                    else:
+                        if event.unicode in "0123456789-,/":
+                            dim_input_box["text"] += event.unicode
+            else:
+                active_box = next((box for box in input_boxes if box["active"]), None)
+                if active_box:
+                    if event.key == pygame.K_RETURN:
+                        try:
+                            x_str, y_str = active_box["text"].split(",")
+                            x = int(Fraction(x_str))
+                            y = int(Fraction(y_str))
+                            if 0 <= x < width and 0 <= y < height:
+                                #alpha_arr_2d[y][x][0] = 255
+                                pixels = pygame.PixelArray(surface)
+                                pixels[x, y] = scr_color[x][y][0]#(255, 0, 0, alpha_arr_2d[y][x][0])
+                                del pixels  # Unlock surface
+                                input_history.append((x, y))  # Store coordinates
+                                print(f"Stored input: {input_history}")
+                            else:
+                                print(f"Coordinates out of bounds! Must be 0 <= x < {width}, 0 <= y < {height}")
+                        except (ValueError, ZeroDivisionError):
+                            print("Invalid input! Enter x/y,z/w (e.g., 100/1,200/1 or -1/2,3/4)")
+                        active_box["text"] = ""
+                    elif event.key == pygame.K_BACKSPACE:
+                        active_box["text"] = active_box["text"][:-1]
+                    else:
+                        if event.unicode in "0123456789-,/":
+                            active_box["text"] += event.unicode
+
+    # Ensure surface is unlocked before blitting
+    if surface and surface.get_locked():
+        print("Surface is locked before blit! Attempting to unlock...")
+        surface.unlock()
+        if pixels is not None:
+            del pixels
+            pixels = None
+
+    # Clear screen
+    screen.fill((0, 0, 0))
+
+    # Draw input boxes
+    if setting_dimensions:
+        color = color_active if dim_input_box["active"] else color_inactive
+        pygame.draw.rect(screen, color, dim_input_box["rect"], 2)
+        text_surface = font.render(dim_input_box["text"], True, (255, 255, 255))
+        screen.blit(text_surface, (dim_input_box["rect"].x + 5, dim_input_box["rect"].y + 5))
+        dim_input_box["rect"].w = max(140, text_surface.get_width() + 10)
+    else:
+
+        for box in input_boxes:
+            color = color_active if box["active"] else color_inactive
+            pygame.draw.rect(screen, color, box["rect"], 2)
+            text_surface = font.render(box["text"], True, (255, 255, 255))
+            screen.blit(text_surface, (box["rect"].x + 5, box["rect"].y + 5))
+            box["rect"].w = max(140, text_surface.get_width() + 10)
+        if surface:
+            screen.blit(surface, (0, 0))
+
+    pygame.display.flip()
+
+pygame.quit()

@@ -1,0 +1,276 @@
+import pygame
+import numpy as np
+from math import sqrt
+from screeninfo import get_monitors
+from fractions import Fraction
+import copy
+import sys
+import urllib.request
+import json
+import time
+import pandas as pd
+
+# Get primary monitor resolution
+monitor = get_monitors()[0]
+monitor_width = monitor.width
+monitor_height = monitor.height
+print(f"Screen resolution: {monitor_width} x {monitor_height} pixels")
+
+# Top cryptocurrencies (hardcoded from Yahoo Finance)
+top_cryptos = [
+    "BTC-USD Bitcoin", "ETH-USD Ethereum", "XRP-USD XRP", "USDT-USD Tether USDt",
+    "SOL-USD Solana", "BNB-USD BNB", "USDC-USD USD Coin", "DOGE-USD Dogecoin",
+    "STETH-USD Lido Staked ETH", "ADA-USD Cardano", "TRX-USD TRON", "WTRX-USD Wrapped TRON",
+    "HYPE32196-USD Hyperliquid", "WSTETH-USD Lido wstETH", "LINK-USD Chainlink",
+    "WBETH-USD Wrapped Beacon ETH", "WETH-USD WETH", "WBTC-USD Wrapped Bitcoin",
+    "SUI20947-USD Sui", "USDE29470-USD Ethena USDe"
+]
+print("Top cryptocurrencies:")
+for crypto in top_cryptos:
+    print(crypto)
+
+# Initialize Pygame
+pygame.init()
+font = pygame.font.Font(None, 32)
+color_active = pygame.Color("dodgerblue2")
+color_inactive = pygame.Color("lightskyblue3")
+
+# Input boxes for configuration
+input_boxes = [
+    {"rect": pygame.Rect(10, 10 + i * 40, 140, 32), "text": "", "active": i == 0, "label": label}
+    for i, label in enumerate(["Symbols (e.g., BTC-USD,ETH-USD)", "Include time (y/n)", "Width,Height (e.g., 400,300)"])
+]
+current_input = 0
+symbols = None
+include_time = False
+userwidth = None
+userheight = None
+setting_config = True
+screen = pygame.display.set_mode((400, 300))  # Temporary screen
+pygame.display.set_caption("Configure Projection")
+surface = None
+scr_color = None
+input_history = []
+pixel_size = 1
+
+# Default camera settings
+focal_length = 100.0
+cam_pos = None  # Will be np.zeros(n_streams)
+
+# Higher-dimensional points and colors
+points = None  # np.array (num_points, n_streams)
+point_colors = None  # np.array (num_points, 3)
+
+# View dimensions
+x_dim = 0
+y_dim = 1
+z_dim = 2
+
+# Current move dim
+current_move_dim = 0
+
+def fetch_historical(symbol, period1, period2, interval='1d'):
+    url = f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}?period1={period1}&period2={period2}&interval={interval}"
+    try:
+        with urllib.request.urlopen(url) as response:
+            data = json.loads(response.read().decode())
+        timestamps = data['chart']['result'][0]['timestamp']
+        closes = data['chart']['result'][0]['indicators']['quote'][0]['close']
+        df = pd.DataFrame({'close': closes}, index=pd.to_datetime(np.array(timestamps), unit='s'))
+        return df
+    except Exception as e:
+        print(f"Error fetching {symbol}: {e}")
+        return None
+
+def load_data(symbol_list, include_time):
+    global points, point_colors, n_streams, cam_pos
+    now = int(time.time())
+    period1 = now - 30 * 24 * 3600  # Last 30 days
+    period2 = now
+    interval = '1d'
+    
+    df_list = []
+    for sym in symbol_list:
+        df = fetch_historical(sym, period1, period2, interval)
+        if df is not None:
+            df_list.append(df.rename(columns={'close': sym}))
+    
+    if not df_list:
+        sys.exit(1)
+    
+    full_df = pd.concat(df_list, axis=1, join='outer').ffill().dropna()
+    
+    main_sym = symbol_list[0]
+    ma_window = 20
+    full_df['MA'] = full_df[main_sym].rolling(ma_window).mean().fillna(full_df[main_sym])
+    
+    if include_time:
+        full_df['time'] = (full_df.index.astype(int) / 1e9 - period1) / (period2 - period1)  # Normalized 0-1
+        cols = ['time'] + symbol_list
+        full_df = full_df[cols]
+    
+    # Standardize
+    means = full_df.mean()
+    stds = full_df.std().replace(0, 1)
+    norm_df = (full_df - means) / stds
+    
+    points = norm_df[symbol_list if not include_time else cols].values  # Exclude MA
+    n_streams = points.shape[1]
+    cam_pos = np.zeros(n_streams)
+    
+    # Colors based on main coin relative to MA (on original)
+    colors = []
+    for i in range(len(full_df)):
+        rel = (full_df[main_sym].iloc[i] - full_df['MA'].iloc[i]) / full_df[main_sym].std()
+        if rel > 0:
+            green = min(255, int(255 * min(1, rel * 5)))  # Scale sensitivity
+            colors.append([0, green, 0])
+        else:
+            red = min(255, int(255 * min(1, -rel * 5)))
+            colors.append([red, 0, 0])
+    point_colors = np.array(colors)
+
+def makearray(lister, default):
+    templist = default
+    for dim in reversed(lister):
+        templist = [copy.deepcopy(templist) for _ in range(dim)]
+    return templist
+
+def initialize_projection():
+    global scr_color, surface, x_dim, y_dim, z_dim
+    x_dim = min(x_dim, n_streams - 1)
+    y_dim = min(y_dim, n_streams - 1)
+    while y_dim == x_dim:
+        y_dim = (y_dim + 1) % n_streams
+    z_dim = min(z_dim, n_streams - 1)
+    while z_dim in (x_dim, y_dim):
+        z_dim = (z_dim + 1) % n_streams
+    
+    scr_color = np.zeros((userheight, userwidth, 3), dtype=np.uint8)
+    
+    center_x = userwidth / 2.0
+    center_y = userheight / 2.0
+    
+    if points is not None:
+        for i, pt in enumerate(points):
+            rel_x = pt[x_dim] - cam_pos[x_dim]
+            rel_y = pt[y_dim] - cam_pos[y_dim]
+            rel_z = pt[z_dim] - cam_pos[z_dim]
+            if rel_z <= 0:
+                continue  # Behind camera
+            factor = focal_length / rel_z
+            proj_x = rel_x * factor + center_x
+            proj_y = rel_y * factor + center_y
+            if 0 <= proj_x < userwidth and 0 <= proj_y < userheight:
+                scr_color[int(proj_y), int(proj_x)] = point_colors[i]
+    
+    surface = pygame.surfarray.make_surface(scr_color)
+
+def update_projection():
+    initialize_projection()
+
+running = True
+clock = pygame.time.Clock()
+last_refresh = 0
+refresh_interval = 86400  # 1 day in seconds, since daily data
+delta_move = 0.1  # Move step for cam_pos
+
+while running:
+    current_time = time.time()
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            if setting_config:
+                for box in input_boxes:
+                    box["active"] = box["rect"].collidepoint(event.pos)
+        elif event.type == pygame.KEYDOWN:
+            if setting_config:
+                active_box = next((box for box in input_boxes if box["active"]), None)
+                if active_box:
+                    if event.key == pygame.K_RETURN:
+                        try:
+                            if active_box["label"] == "Symbols (e.g., BTC-USD,ETH-USD)":
+                                symbols = [s.strip() for s in active_box["text"].split(',')]
+                                if not symbols:
+                                    raise ValueError
+                                input_boxes[1]["active"] = True
+                                active_box["active"] = False
+                            elif active_box["label"] == "Include time (y/n)":
+                                include_time = active_box["text"].strip().lower() == 'y'
+                                input_boxes[2]["active"] = True
+                                active_box["active"] = False
+                            elif active_box["label"] == "Width,Height (e.g., 400,300)":
+                                w_str, h_str = active_box["text"].split(",")
+                                userwidth = int(Fraction(w_str))
+                                userheight = int(Fraction(h_str))
+                                if userwidth <= 2 or userheight <= 2 or userwidth > monitor_width or userheight > monitor_height:
+                                    raise ValueError
+                                # Load data and initialize
+                                load_data(symbols, include_time)
+                                screen = pygame.display.set_mode((userwidth, userheight))
+                                pygame.display.set_caption("Projection Visualization")
+                                initialize_projection()
+                                setting_config = False
+                                input_boxes = []  # No more inputs
+                        except (ValueError, ZeroDivisionError):
+                            print(f"Invalid input for {active_box['label']}")
+                        active_box["text"] = ""
+                    elif event.key == pygame.K_BACKSPACE:
+                        active_box["text"] = active_box["text"][:-1]
+                    elif event.unicode in "0123456789-,/ynYN":
+                        active_box["text"] += event.unicode
+            else:
+                # Controls after setup
+                if event.key == pygame.K_r:  # Refresh data
+                    load_data(symbols, include_time)
+                    update_projection()
+                elif event.key == pygame.K_x:  # Cycle x_dim
+                    x_dim = (x_dim + 1) % n_streams
+                    update_projection()
+                elif event.key == pygame.K_y:  # Cycle y_dim
+                    y_dim = (y_dim + 1) % n_streams
+                    update_projection()
+                elif event.key == pygame.K_z:  # Cycle z_dim
+                    z_dim = (z_dim + 1) % n_streams
+                    update_projection()
+                elif event.key in range(pygame.K_0, pygame.K_9 + 1):
+                    dim = event.key - pygame.K_0
+                    if dim < n_streams:
+                        current_move_dim = dim
+                elif event.key == pygame.K_UP:
+                    cam_pos[current_move_dim] += delta_move
+                    update_projection()
+                elif event.key == pygame.K_DOWN:
+                    cam_pos[current_move_dim] -= delta_move
+                    update_projection()
+                elif event.key == pygame.K_PLUS or event.key == pygame.K_EQUALS:
+                    focal_length += 10
+                    update_projection()
+                elif event.key == pygame.K_MINUS:
+                    focal_length = max(10, focal_length - 10)
+                    update_projection()
+
+    if not setting_config and current_time - last_refresh > refresh_interval:
+        load_data(symbols, include_time)
+        update_projection()
+        last_refresh = current_time
+
+    # Clear screen
+    screen.fill((0, 0, 0))
+    if surface and not setting_config:
+        screen.blit(surface, (0, 0))
+
+    # Draw input boxes if in config mode
+    if setting_config:
+        for box in input_boxes:
+            color = color_active if box["active"] else color_inactive
+            pygame.draw.rect(screen, color, box["rect"], 2)
+            text_surface = font.render(f"{box['label']}: {box['text']}", True, (255, 255, 255))
+            screen.blit(text_surface, (box["rect"].x + 5, box["rect"].y + 5))
+            box["rect"].w = max(140, text_surface.get_width() + 10)
+
+    pygame.display.flip()
+    clock.tick(60)  # Limit to 60 FPS
+
+pygame.quit()

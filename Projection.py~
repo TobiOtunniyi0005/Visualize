@@ -1,0 +1,13 @@
+from screeninfo import get_monitors
+
+# Get the primary monitor's resolution
+monitor = get_monitors()[0]
+width = monitor.width
+height = monitor.height
+total_pixels = width * height
+
+print(f"Screen resolution: {width} x {height} pixels")
+print(f"Total pixels: {total_pixels}")
+
+dimensions = 12*[0]
+print(dimensions)

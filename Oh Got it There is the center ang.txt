@@ -1,0 +1,7 @@
+Oh, Got it. There is the center angle.
+They choose where they want to land. Get the angle to the center of the screen and then move a little bit more. This is in radians.
+If it is on the screen then it is published.
+The points will plot themselves from  now on.
+The angles would be pre-set into the pixels from now on and the dots would then ask what angles they go in.
+Now you can rotate the screen as well as increase its size and I already have the pixel rules so. I am ready.
+If a bunch of pixels are added the closest one is added and then the old ones are removed first and it is placed in the right angle positions.
